@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RJ Store POS</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0f766e">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--tx:#1d1d1b;--mu:#6b6b66;--bd:#e3e1da;--ac:#0f766e;--act:#fff;--bad:#b42318;--warn:#b54708;--ok:#067647;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121211;--card:#1c1c1a;--tx:#f1efe8;--mu:#a3a199;--bd:#333330;--ac:#2dd4bf;--act:#04201d;--bad:#f97066;--warn:#fdb022;--ok:#47cd89;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121211;--card:#1c1c1a;--tx:#f1efe8;--mu:#a3a199;--bd:#333330;--ac:#2dd4bf;--act:#04201d;--bad:#f97066;--warn:#fdb022;--ok:#47cd89;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:14px 16px 4px;font-weight:700;font-size:20px}
+header span{color:var(--ac)}
+#main{padding:8px 12px 96px;max-width:900px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin:10px 0}
+.row{display:flex;gap:8px;align-items:center}
+.sp{justify-content:space-between}
+input{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:11px 12px;width:100%;min-width:0}
+button{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:11px 14px;cursor:pointer;white-space:nowrap}
+button.pri{background:var(--ac);color:var(--act);border-color:var(--ac);font-weight:600}
+button.big{width:100%;padding:15px;font-size:18px}
+button.sm{padding:6px 11px}
+.mu{color:var(--mu);font-size:14px}
+.tot{font-size:30px;font-weight:700}
+.badge{border-radius:99px;padding:2px 10px;font-size:13px;border:1px solid var(--bd)}
+.low{color:var(--warn);border-color:var(--warn)}.out{color:var(--bad);border-color:var(--bad)}.good{color:var(--ok)}
+.item{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--bd)}
+.item:last-child{border:0}
+.item b{display:block}
+.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom,0px);z-index:5}
+.tabs button{flex:1;border:0;border-radius:0;padding:14px 4px;background:none;color:var(--mu)}
+.tabs button.on{color:var(--ac);font-weight:700}
+#modal,#scanbox{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9;display:flex;align-items:flex-end;justify-content:center}
+#modal[hidden],#scanbox[hidden]{display:none}
+.sheet{background:var(--bg);width:100%;max-width:520px;max-height:92%;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
+.sheet label{display:block;font-size:13px;color:var(--mu);margin:10px 0 3px}
+video{width:100%;border-radius:12px;background:#000;max-height:60vh}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.stat{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px}
+.stat b{font-size:22px;display:block}
+.bars{display:flex;gap:6px;align-items:flex-end;height:110px}
+.bars div{flex:1;text-align:center;font-size:12px;color:var(--mu)}
+.bars i{display:block;background:var(--ac);border-radius:5px 5px 0 0;min-height:2px;margin-bottom:3px}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:84px;background:var(--tx);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:20;max-width:90%;display:none}
+textarea{width:100%;height:80px;font:12px monospace;background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:10px}
+@media print{.tabs,button,#toast{display:none!important}}
+</style></head>
+<body>
+<header>🛒 <span>RJ Store</span> POS</header>
+<div id="main"></div>
+<div class="tabs" id="tabs"></div>
+<div id="modal" hidden></div>
+<div id="scanbox" hidden><div class="sheet"><video id="cam" playsinline muted></video><p class="mu" id="scanmsg">Point the camera at a barcode.</p><button class="big" data-a="closescan">Done</button></div></div>
+<div id="toast"></div>
+<script>
+const KEY="rjstore_v1";
+let S={products:[],sales:[]};
+try{const r=localStorage.getItem(KEY);if(r)S=JSON.parse(r)}catch(e){}
+const $=s=>document.querySelector(s);
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("Could not save – storage may be full")}};
+const peso=n=>"₱"+(+n||0).toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const find=bc=>S.products.find(p=>p.bc===bc);
+let tab="sell",cart=[],week=0,editBc=null,scanMode="sell";
+function toast(m){const t=$("#toast");t.textContent=m;t.style.display="block";clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display="none",2600)}
+function beep(){try{const a=new (window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator();o.frequency.value=880;o.connect(a.destination);o.start();setTimeout(()=>{o.stop();a.close()},90)}catch(e){}}
+const stockBadge=p=>p.stock<=0?'<span class="badge out">Out</span>':p.stock<=p.reorder?`<span class="badge low">Low · ${p.stock}</span>`:`<span class="badge">${p.stock} in stock</span>`;
+
+/* ---------- camera scanner ---------- */
+let stream=null,det=null,scanning=false,last="",lastT=0;
+async function startScan(mode){
+  if(!("BarcodeDetector" in window)){toast("Camera scanning needs Chrome on Android. You can still type barcodes.");return}
+  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})}catch(e){toast("Camera blocked – allow camera access for this page");return}
+  scanMode=mode;
+  det=new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","qr_code"]});
+  const v=$("#cam");v.srcObject=stream;await v.play();$("#scanbox").hidden=false;scanning=true;loop();
+}
+async function loop(){
+  if(!scanning)return;
+  try{const r=await det.detect($("#cam"));if(r.length){const c=r[0].rawValue,n=Date.now();if(c!==last||n-lastT>2000){last=c;lastT=n;beep();gotCode(c)}}}catch(e){}
+  setTimeout(loop,200);
+}
+function stopScan(){scanning=false;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$("#scanbox").hidden=true}
+function gotCode(c){
+  if(scanMode==="sell"){addToCart(c)}
+  else if(scanMode==="form"){stopScan();const f=$("#f_bc");if(f)f.value=c}
+  else if(scanMode==="recv"){
+    const p=find(c);if(!p){toast("Unknown barcode "+c);return}
+    stopScan();const n=parseInt(prompt("How many "+p.name+" received?","1"),10);
+    if(n>0){p.stock+=n;save();toast("+"+n+" "+p.name);render()}
+  }
+}
+
+/* ---------- selling ---------- */
+function addToCart(bc){
+  const p=find(bc);
+  if(!p){stopScan();toast("Unknown barcode – add it as a product");openForm(null,bc);return}
+  const c=cart.find(x=>x.bc===bc),have=c?c.qty:0;
+  if(have+1>p.stock){toast("Only "+p.stock+" "+p.name+" in stock");return}
+  c?c.qty++:cart.push({bc,qty:1});
+  toast("Added "+p.name);renderCart();
+}
+function cartTotal(){return cart.reduce((s,c)=>s+(find(c.bc)?.price||0)*c.qty,0)}
+function renderCart(){
+  const box=$("#cartbox");if(!box)return;
+  if(!cart.length){box.innerHTML='<p class="mu" style="text-align:center;margin:18px 0">Cart is empty – scan something 📷</p>';return}
+  const tot=cartTotal(),cash=parseFloat($("#cash")?.value)||0;
+  box.innerHTML=cart.map(c=>{const p=find(c.bc);return `<div class="item"><div><b>${esc(p.name)}</b><span class="mu">${peso(p.price)} each</span></div>
+  <div class="row"><button class="sm" data-a="dec" data-bc="${esc(c.bc)}">−</button><b>${c.qty}</b><button class="sm" data-a="inc" data-bc="${esc(c.bc)}">+</button><button class="sm" data-a="rm" data-bc="${esc(c.bc)}">✕</button></div></div>`}).join("")+
+  `<div class="row sp" style="margin-top:10px"><span class="mu">Total</span><span class="tot">${peso(tot)}</span></div>
+  <div class="row" style="margin:8px 0"><input id="cash" type="number" inputmode="decimal" placeholder="Cash received" value="${cash||""}"><span class="mu" id="chg" style="min-width:110px;text-align:right">${cash>=tot?"Change "+peso(cash-tot):""}</span></div>
+  <button class="pri big" data-a="checkout">Charge ${peso(tot)}</button>`;
+  $("#cash").oninput=e=>{const v=parseFloat(e.target.value)||0;$("#chg").textContent=v>=tot?"Change "+peso(v-tot):""};
+}
+function checkout(){
+  if(!cart.length)return;
+  const items=cart.map(c=>{const p=find(c.bc);return{bc:p.bc,name:p.name,qty:c.qty,price:p.price,cost:p.cost||0}});
+  items.forEach(i=>{find(i.bc).stock-=i.qty});
+  S.sales.push({t:Date.now(),items,total:cartTotal()});
+  save();cart=[];toast("Sale saved ✓");renderSell();
+}
+function hits(q){
+  const h=$("#hits");q=q.trim().toLowerCase();
+  if(!q){h.innerHTML="";return}
+  const m=S.products.filter(p=>p.name.toLowerCase().includes(q)||p.bc.includes(q)).slice(0,6);
+  h.innerHTML=m.length?m.map(p=>`<button class="sm" style="margin:0 6px 6px 0" data-a="add" data-bc="${esc(p.bc)}">${esc(p.name)} · ${peso(p.price)}</button>`).join(""):'<span class="mu">No match – press Enter to add it as a new product</span>';
+}
+function renderSell(){
+  $("#main").innerHTML=`<div class="row"><input id="code" placeholder="Barcode or item name" autocomplete="off"><button class="pri" data-a="scan">📷 Scan</button></div>
+  <div id="hits" style="margin-top:8px"></div><div class="card" id="cartbox"></div>`;
+  const i=$("#code");
+  i.oninput=()=>hits(i.value);
+  i.onkeydown=e=>{if(e.key==="Enter"){const v=i.value.trim();if(!v)return;if(find(v)){addToCart(v);i.value="";hits("")}else if(!S.products.some(p=>p.name.toLowerCase().includes(v.toLowerCase()))){openForm(null,/^\d+$/.test(v)?v:"")}}};
+  renderCart();
+}
+
+/* ---------- products ---------- */
+function renderProducts(){
+  $("#main").innerHTML=`<div class="row"><input id="psearch" placeholder="Search products"><button class="pri" data-a="new">+ Add</button></div><div class="card" id="plist"></div>`;
+  const draw=()=>{const q=$("#psearch").value.toLowerCase();const l=S.products.filter(p=>p.name.toLowerCase().includes(q)||p.bc.includes(q)).sort((a,b)=>a.name.localeCompare(b.name));
+    $("#plist").innerHTML=l.length?l.map(p=>`<div class="item" data-a="edit" data-bc="${esc(p.bc)}" style="cursor:pointer"><div><b>${esc(p.name)}</b><span class="mu">${esc(p.bc)} · ${peso(p.price)}</span></div>${stockBadge(p)}</div>`).join(""):
+    `<p class="mu" style="text-align:center">${S.products.length?"No match":"No products yet."}</p>${S.products.length?"":'<button class="big" data-a="sample">Load 5 sample items to try it out</button>'}`};
+  $("#psearch").oninput=draw;draw();
+}
+function openForm(bc,pre){
+  editBc=bc;const p=bc?find(bc):{bc:pre||"",name:"",price:"",cost:"",stock:"",reorder:5};
+  tab="products";highlight();
+  const m=$("#modal");m.hidden=false;
+  m.innerHTML=`<div class="sheet"><b style="font-size:18px">${bc?"Edit product":"New product"}</b>
+  <label>Barcode</label><div class="row"><input id="f_bc" value="${esc(p.bc)}"><button data-a="scanform">📷</button></div>
+  <label>Name</label><input id="f_name" value="${esc(p.name)}">
+  <div class="row"><div><label>Selling price</label><input id="f_price" type="number" inputmode="decimal" value="${p.price}"></div><div><label>Cost (optional)</label><input id="f_cost" type="number" inputmode="decimal" value="${p.cost||""}"></div></div>
+  <div class="row"><div><label>Stock on hand</label><input id="f_stock" type="number" inputmode="numeric" value="${p.stock}"></div><div><label>Reorder when ≤</label><input id="f_re" type="number" inputmode="numeric" value="${p.reorder}"></div></div>
+  <div class="row" style="margin-top:14px"><button class="pri" style="flex:1" data-a="savep">Save</button><button style="flex:1" data-a="closeform">Cancel</button>${bc?'<button data-a="delp">🗑</button>':""}</div></div>`;
+  render(true);
+}
+function saveP(){
+  const bc=$("#f_bc").value.trim(),name=$("#f_name").value.trim();
+  if(!bc||!name){toast("Barcode and name are required");return}
+  const o={bc,name,price:parseFloat($("#f_price").value)||0,cost:parseFloat($("#f_cost").value)||0,stock:parseInt($("#f_stock").value,10)||0,reorder:parseInt($("#f_re").value,10)||0};
+  if(editBc){const i=S.products.findIndex(p=>p.bc===editBc);if(bc!==editBc&&find(bc)){toast("That barcode already exists");return}S.products[i]=o}
+  else{if(find(bc)){toast("That barcode already exists");return}S.products.push(o)}
+  save();closeForm();toast("Saved ✓");render();
+}
+function closeForm(){$("#modal").hidden=true;$("#modal").innerHTML=""}
+
+/* ---------- restock ---------- */
+function sold7(){const m={},from=Date.now()-7*864e5;S.sales.forEach(s=>{if(s.t>=from)s.items.forEach(i=>m[i.bc]=(m[i.bc]||0)+i.qty)});return m}
+function restockList(){
+  const m=sold7();
+  return S.products.filter(p=>p.stock<=p.reorder).map(p=>{const par=Math.max(p.reorder*2,m[p.bc]||0);return{p,sold:m[p.bc]||0,need:Math.max(par-p.stock,1)}}).sort((a,b)=>a.p.stock-b.p.stock);
+}
+function renderRestock(){
+  const l=restockList();
+  $("#main").innerHTML=`<div class="row sp"><div><b>Needs restocking</b><div class="mu">${l.length} item${l.length===1?"":"s"} at or below reorder level</div></div><button data-a="scanrecv">📷 Receive</button></div>
+  <div class="card">${l.length?l.map(r=>`<div class="item"><div><b>${esc(r.p.name)}</b><span class="mu">${r.p.stock} left · sold ${r.sold} this week · suggest ${r.need}</span></div>
+  <div class="row" style="width:150px"><input id="r_${esc(r.p.bc)}" type="number" inputmode="numeric" value="${r.need}" style="padding:8px"><button class="pri sm" data-a="recv" data-bc="${esc(r.p.bc)}">+Add</button></div></div>`).join(""):'<p class="mu" style="text-align:center">All stocked up 🎉</p>'}</div>
+  ${l.length?'<button class="big" data-a="copylist">Copy shopping list</button>':""}`;
+}
+function copyText(t){
+  try{navigator.clipboard.writeText(t).then(()=>toast("Copied ✓"),()=>fb(t))}catch(e){fb(t)}
+  function fb(t){const a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();try{document.execCommand("copy");toast("Copied ✓")}catch(e){toast("Copy failed")}a.remove()}
+}
+
+/* ---------- report ---------- */
+function wk(o){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7)+o*7);const e=new Date(d);e.setDate(e.getDate()+7);return[d.getTime(),e.getTime()]}
+function renderReport(){
+  const[a,b]=wk(week),sales=S.sales.filter(s=>s.t>=a&&s.t<b);
+  let rev=0,profit=0,units=0;const days=Array(7).fill(0),prod={};
+  sales.forEach(s=>{rev+=s.total;days[Math.min(6,Math.floor((s.t-a)/864e5))]+=s.total;s.items.forEach(i=>{units+=i.qty;profit+=(i.price-i.cost)*i.qty;const x=prod[i.bc]||(prod[i.bc]={name:i.name,qty:0,rev:0});x.qty+=i.qty;x.rev+=i.price*i.qty})});
+  const top=Object.values(prod).sort((x,y)=>y.qty-x.qty).slice(0,5),mx=Math.max(...days,1);
+  const f=t=>new Date(t).toLocaleDateString("en-PH",{month:"short",day:"numeric"});
+  const dn=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  $("#main").innerHTML=`<div class="row sp"><button data-a="wkprev">‹</button><b>${f(a)} – ${f(b-864e5)}${week===0?" (this week)":""}</b><button data-a="wknext" ${week>=0?"disabled":""}>›</button></div>
+  <div class="grid" style="margin-top:10px"><div class="stat"><span class="mu">Sales</span><b>${peso(rev)}</b></div><div class="stat"><span class="mu">Est. profit</span><b>${peso(profit)}</b></div><div class="stat"><span class="mu">Transactions</span><b>${sales.length}</b></div><div class="stat"><span class="mu">Items sold</span><b>${units}</b></div></div>
+  <div class="card"><b>Daily sales</b><div class="bars" style="margin-top:10px">${days.map((v,i)=>`<div><i style="height:${v/mx*80}px"></i>${dn[i]}</div>`).join("")}</div></div>
+  <div class="card"><b>Top sellers</b>${top.length?top.map(t=>`<div class="item"><span>${esc(t.name)}</span><span class="mu">${t.qty} sold · ${peso(t.rev)}</span></div>`).join(""):'<p class="mu">No sales this week.</p>'}</div>
+  <div class="card"><b>Low stock now:</b> <span class="${restockList().length?"low":"good"}">${restockList().length} item(s)</span></div>
+  <div class="card"><b>Backup</b><p class="mu" style="margin:4px 0 8px">Your data lives in this tablet’s browser. Copy a backup now and then and keep it somewhere safe.</p>
+  <textarea id="bk" placeholder="Paste a backup here to restore"></textarea><div class="row" style="margin-top:8px"><button style="flex:1" data-a="backup">Copy backup</button><button style="flex:1" data-a="restore">Restore</button><button data-a="print">Print</button></div></div>`;
+}
+
+/* ---------- shell ---------- */
+const TABS=[["sell","🧾 Sell"],["products","📦 Products"],["restock","🔄 Restock"],["report","📊 Report"]];
+function highlight(){$("#tabs").innerHTML=TABS.map(([k,l])=>`<button class="${k===tab?"on":""}" data-a="tab" data-k="${k}">${l}</button>`).join("")}
+function render(keepModal){highlight();({sell:renderSell,products:renderProducts,restock:renderRestock,report:renderReport})[tab]()}
+const act={
+  tab:d=>{stopScan();closeForm();tab=d.k;render()},
+  add:d=>{addToCart(d.bc);const i=$("#code");if(i){i.value="";hits("")}},
+  inc:d=>{addToCart(d.bc)},
+  dec:d=>{const c=cart.find(x=>x.bc===d.bc);if(c&&--c.qty<=0)cart=cart.filter(x=>x!==c);renderCart()},
+  rm:d=>{cart=cart.filter(x=>x.bc!==d.bc);renderCart()},
+  checkout,
+  scan:()=>startScan("sell"),
+  closescan:()=>{stopScan()},
+  scanform:()=>startScan("form"),
+  scanrecv:()=>startScan("recv"),
+  new:()=>openForm(null,""),
+  edit:d=>openForm(d.bc),
+  savep:saveP,
+  closeform:closeForm,
+  delp:()=>{if(confirm("Delete this product?")){S.products=S.products.filter(p=>p.bc!==editBc);save();closeForm();render()}},
+  sample:()=>{S.products.push(...[["4800016644801","Lucky Me Pancit Canton",16,12,24],["4800361417303","Coke Mismo 295ml",20,15,12],["4800092118011","Bear Brand Sachet",14,11,30],["4806518000015","Skyflakes Pack",9,7,20],["4800888123456","Bottled Water 500ml",15,10,18]].map(a=>({bc:a[0],name:a[1],price:a[2],cost:a[3],stock:a[4],reorder:6})));save();render()},
+  recv:d=>{const n=parseInt($("#r_"+CSS.escape(d.bc)).value,10),p=find(d.bc);if(n>0&&p){p.stock+=n;save();toast("+"+n+" "+p.name);render()}},
+  copylist:()=>copyText("RJ Store shopping list\n"+restockList().map(r=>`- ${r.p.name} x${r.need}`).join("\n")),
+  wkprev:()=>{week--;render()},wknext:()=>{if(week<0){week++;render()}},
+  backup:()=>{const t=JSON.stringify(S);$("#bk").value=t;copyText(t)},
+  restore:()=>{try{const o=JSON.parse($("#bk").value);if(!Array.isArray(o.products)||!Array.isArray(o.sales))throw 0;if(confirm("Replace all current data with this backup?")){S=o;save();toast("Restored ✓");render()}}catch(e){toast("That doesn’t look like a valid backup")}},
+  print:()=>window.print()
+};
+document.addEventListener("click",e=>{const b=e.target.closest("[data-a]");if(b&&act[b.dataset.a])act[b.dataset.a](b.dataset)});
+render();
+if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}))}
+</script></body></html>
